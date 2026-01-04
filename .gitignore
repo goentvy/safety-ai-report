@@ -1,0 +1,16 @@
+# IDE
+.idea/
+.vscode/
+
+# Flutter build
+frontend/.metadata
+frontend/pubspec.lock
+frontend/android/
+frontend/ios/
+frontend/linux/
+frontend/macos/
+frontend/web/
+frontend/windows/
+
+# Others
+*.log
