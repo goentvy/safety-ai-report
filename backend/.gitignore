@@ -3,3 +3,12 @@
 __pycache__/
 .idea/
 .DS_Store
+# macOS hidden files (recursive)
+**/.DS_Store
+.AppleDouble
+.Spotlight-V100
+.Trashes
+
+# Project-specific ignores
+main.py.bak
+safety_db/
