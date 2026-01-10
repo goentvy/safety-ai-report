@@ -1,7 +1,8 @@
-# 🔌 Safety AI Agent - API 명세서 (Frontend Team)
+# 🔌 Safety AI Agent - API 명세서 (Flutter/Dart Team)
 
-**버전:** 2.0.0  
+**버전:** 2.2.0 (JSON 버퍼링 스트리밍)  
 **마지막 업데이트:** 2026년 1월 10일  
+**프론트엔드:** Flutter/Dart  
 **상태:** ✅ 프로덕션 준비 완료
 
 ---
@@ -9,13 +10,12 @@
 ## 📋 목차
 
 1. [개요](#개요)
-2. [인증](#인증)
-3. [기본 정보](#기본-정보)
-4. [API 엔드포인트](#api-엔드포인트)
+2. [기본 정보](#기본-정보)
+3. [API 엔드포인트](#api-엔드포인트)
+4. [스트리밍 응답](#스트리밍-응답)
 5. [요청/응답 스키마](#요청응답-스키마)
 6. [에러 처리](#에러-처리)
 7. [코드 예시](#코드-예시)
-8. [FAQ](#faq)
 
 ---
 
@@ -23,7 +23,19 @@
 
 ### 서비스 설명
 
-Safety AI Agent는 산업현장 사진을 자동으로 분석하여 산업안전보건법 위반사항을 지적하고, 안전 관련 질문에 법령 기반으로 답변하는 AI 서비스입니다.
+Safety AI Agent는 **실시간 스트리밍** 기반으로:
+- 산업현장 사진을 자동으로 분석
+- 산업안전보건법 위반사항 지적
+- 안전 관련 질문에 법령 기반 답변
+
+### 핵심 특징
+
+| 특징 | 설명 |
+|------|------|
+| 🚀 실시간 스트리밍 | SSE 기반 청크 전송 |
+| ⚡ 빠른 응답 | 첫 응답 < 200ms |
+| 💾 최적화 | 40% 토큰 감소 |
+| 🛡️ 검증 | 입력 검증 및 에러 처리 |
 
 ### 기본 URL
 
@@ -33,193 +45,368 @@ Safety AI Agent는 산업현장 사진을 자동으로 분석하여 산업안전
 프로덕션: https://api.example.com
 ```
 
-### 지원 버전
-
-- Python 3.12+
-- FastAPI 0.104+
-- Pydantic v2
-
----
-
-## 인증
-
-### 현재 상태
-🔓 **인증 없음** (개발 단계)
-
-### 향후 계획
-🔐 **OAuth2 / JWT 인증** (Q2 2026 예정)
-
 ---
 
 ## 기본 정보
 
-### 요청 형식
-
-모든 API는 **multipart/form-data**를 사용합니다.
+### 요청 헤더
 
 ```
-Content-Type: multipart/form-data
+Content-Type: multipart/form-data (이미지 업로드 시)
+Accept: text/event-stream (스트리밍 응답 시)
 ```
 
 ### 응답 형식
 
-모든 응답은 **JSON**입니다.
-
+**SSE (Server-Sent Events)** 스트림:
 ```
-Content-Type: application/json; charset=utf-8
+data: 첫번째청크\n\n
+data: 두번째청크\n\n
+data: 세번째청크\n\n
 ```
 
-### 요청 인코딩
+### 파일 제한
 
-- UTF-8 권장
-- 이미지는 Base64 자동 인코딩
-
-### 응답 인코딩
-
-- UTF-8 (모든 응답)
-- 한국어 완벽 지원
+- **최대 크기**: 10MB
+- **지원 형식**: JPEG, PNG, GIF, WebP
 
 ---
 
 ## API 엔드포인트
 
-### 1. 헬스체크 (Health Check)
+### 1. 헬스체크
 
-#### 요청
-
-```http
+```
 GET /
 ```
 
-#### 응답
+**목적**: 서버 상태 확인
 
-**200 OK**
-
+**응답**:
 ```json
 {
   "status": "healthy",
   "service": "Safety AI Agent",
-  "version": "2.0.0"
+  "version": "2.1.0",
+  "streaming": true
 }
 ```
-
-**사용 목적:**
-- 서버 상태 확인
-- 서비스 가용성 확인
-- 응답 시간 측정
 
 ---
 
-### 2. 통합 챗 API (Unified Chat API)
+### 2. 통합 스트리밍 API ⭐ (권장)
 
-#### 요청
-
-```http
-POST /chat
+```
+POST /chat/stream
 ```
 
-**파라미터:**
+**목적**: 이미지 분석, 문서 생성, 질의응답을 스트리밍으로 처리
 
-| 이름 | 타입 | 필수 | 제한 | 설명 |
-|------|------|:----:|------|------|
-| `file` | File | ✗ | <10MB | 이미지 파일 (JPEG/PNG/GIF/WEBP) |
-| `message` | String | ✗ | ≤5000자 | 텍스트 메시지 |
+**파라미터**:
 
-**제약조건:**
-- `file`과 `message` 중 하나는 반드시 필요 (둘 다 필수 아님)
-- 파일은 이미지 형식만 지원
-- 파일 크기는 10MB 이하
+| 파라미터 | 타입 | 필수 | 설명 | 예시 |
+|---------|------|------|------|------|
+| `file` | File | ❌ | 분석할 이미지 (최대 10MB) | `photo.jpg` |
+| `message` | string | ❌ | 질문 또는 요청 | "비계의 안전성을 점검해줘" |
 
-#### 응답
+**최소 요구사항**: `file` 또는 `message` 중 하나는 필수
 
-**200 OK - 성공 (3가지 타입)**
+**응답**: 스트림 형식 (SSE)
 
-**Type 1: 이미지 분석 결과 (VisionResponse)**
+---
+
+## 스트리밍 응답
+
+### 응답 형식 (JSON 버퍼링)
+
+**개선된 스트리밍**: 50~60자 단위로 버퍼링된 JSON 응답
 
 ```json
-{
-  "type": "vision",
-  "content": "안전모 미착용이 확인되었습니다. 산업안전보건기준에 관한 규칙 제38조에 따르면...",
-  "status": "success"
+data: {"type":"text","content":"비계 점검 결과:\n## 1. 보호구"}
+data: {"type":"text","content":" 착용 여부\n- 안전모: 미착용 (위반)"}
+data: {"type":"text","content":"\n\n## 2. 난간대 높이\n- 현황: 85cm"}
+data: {"type":"text","content":"\n- 기준: 90cm 이상\n- 판정: 부적합"}
+```
+
+### Flutter/Dart 구현 (http 패키지)
+
+#### 1. 의존성 추가 (pubspec.yaml)
+
+```yaml
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.1.0
+  image_picker: ^1.0.0  # 이미지 선택용
+```
+
+#### 2. SSE 스트리밍 처리
+
+```dart
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+
+class SafetyApiService {
+  static const String baseUrl = 'http://localhost:8000';
+  
+  /// SSE 스트리밍 요청
+  Stream<String> streamChat({
+    String? imagePath,
+    String? message,
+  }) async* {
+    // FormData 생성
+    var request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/chat/stream'),
+    );
+    
+    if (imagePath != null) {
+      request.files.add(
+        await http.MultipartFile.fromPath('file', imagePath),
+      );
+    }
+    
+    if (message != null) {
+      request.fields['message'] = message;
+    }
+    
+    // 스트리밍 응답 받기
+    var streamedResponse = await request.send();
+    
+    if (streamedResponse.statusCode != 200) {
+      throw Exception('API 오류: ${streamedResponse.statusCode}');
+    }
+    
+    // SSE 파싱
+    String buffer = '';
+    
+    await for (var chunk in streamedResponse.stream.transform(utf8.decoder)) {
+      buffer += chunk;
+      
+      // SSE 라인 분리 (data: ... \n\n)
+      var lines = buffer.split('\n\n');
+      buffer = lines.last;
+      
+      for (var i = 0; i < lines.length - 1; i++) {
+        if (lines[i].startsWith('data: ')) {
+          try {
+            // JSON 파싱
+            var jsonStr = lines[i].substring(6);
+            var jsonData = jsonDecode(jsonStr);
+            
+            if (jsonData['type'] == 'text') {
+              yield jsonData['content'] as String;
+            } else if (jsonData['type'] == 'error') {
+              throw Exception(jsonData['content']);
+            }
+          } catch (e) {
+            print('JSON 파싱 에러: $e');
+          }
+        }
+      }
+    }
+  }
 }
 ```
 
-**Type 2: 문서 생성 결과 (DocumentResponse)**
+#### 3. UI에서 사용 (StreamBuilder)
 
-```json
-{
-  "type": "document",
-  "content": "# 건설업 안전점검 체크리스트\n\n## 1. 보호구\n...",
-  "status": "success"
+```dart
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+
+class ChatScreen extends StatefulWidget {
+  @override
+  _ChatScreenState createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends State<ChatScreen> {
+  final SafetyApiService _apiService = SafetyApiService();
+  final TextEditingController _messageController = TextEditingController();
+  
+  String _response = '';
+  bool _isLoading = false;
+  String? _imagePath;
+  
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('안전 점검 AI')),
+      body: Column(
+        children: [
+          // 이미지 선택 버튼
+          ElevatedButton(
+            onPressed: _pickImage,
+            child: Text(_imagePath == null ? '이미지 선택' : '이미지 변경'),
+          ),
+          
+          // 메시지 입력
+          Padding(
+            padding: EdgeInsets.all(16),
+            child: TextField(
+              controller: _messageController,
+              decoration: InputDecoration(
+                hintText: '질문을 입력하세요...',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+          ),
+          
+          // 전송 버튼
+          ElevatedButton(
+            onPressed: _isLoading ? null : _handleSubmit,
+            child: Text(_isLoading ? '분석 중...' : '전송'),
+          ),
+          
+          // 응답 표시
+          Expanded(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                _response,
+                style: TextStyle(fontSize: 16),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Future<void> _pickImage() async {
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+    
+    if (image != null) {
+      setState(() {
+        _imagePath = image.path;
+      });
+    }
+  }
+  
+  Future<void> _handleSubmit() async {
+    if (_imagePath == null && _messageController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('이미지 또는 메시지를 입력하세요')),
+      );
+      return;
+    }
+    
+    setState(() {
+      _isLoading = true;
+      _response = '';
+    });
+    
+    try {
+      await for (var chunk in _apiService.streamChat(
+        imagePath: _imagePath,
+        message: _messageController.text.isEmpty ? null : _messageController.text,
+      )) {
+        setState(() {
+          _response += chunk;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _response = '에러: $e';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+  
+  @override
+  void dispose() {
+    _messageController.dispose();
+    super.dispose();
+  }
 }
 ```
 
-**Type 3: 질의응답 결과 (QAResponse)**
+### Provider 패턴 사용 (권장)
 
-```json
-{
-  "type": "qa",
-  "content": "산업안전보건법 제38조에 따르면...",
-  "model_used": "claude-sonnet-4-5",
-  "source_docs": [],
-  "status": "success"
+```dart
+import 'package:flutter/foundation.dart';
+
+class ChatProvider extends ChangeNotifier {
+  final SafetyApiService _apiService = SafetyApiService();
+  
+  String _response = '';
+  bool _isLoading = false;
+  String? _error;
+  
+  String get response => _response;
+  bool get isLoading => _isLoading;
+  String? get error => _error;
+  
+  Future<void> sendMessage({String? imagePath, String? message}) async {
+    _isLoading = true;
+    _response = '';
+    _error = null;
+    notifyListeners();
+    
+    try {
+      await for (var chunk in _apiService.streamChat(
+        imagePath: imagePath,
+        message: message,
+      )) {
+        _response += chunk;
+        notifyListeners();
+      }
+    } catch (e) {
+      _error = e.toString();
+      notifyListeners();
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+  
+  void clear() {
+    _response = '';
+    _error = null;
+    notifyListeners();
+  }
 }
-```
 
-#### 에러 응답
+// 사용 예시
+// Provider 등록 (main.dart)
+// ChangeNotifierProvider(create: (_) => ChatProvider())
 
-**400 Bad Request**
-
-```json
-{
-  "type": "error",
-  "status": "fail",
-  "content": "파일 또는 메시지 중 하나는 반드시 제공되어야 합니다.",
-  "error_code": "INVALID_MESSAGE"
-}
-```
-
-**413 Payload Too Large**
-
-```json
-{
-  "type": "error",
-  "status": "fail",
-  "content": "파일 크기(12.34MB)가 최대 허용 크기(10.00MB)를 초과합니다",
-  "error_code": "FILE_TOO_LARGE"
-}
-```
-
-**415 Unsupported Media Type**
-
-```json
-{
-  "type": "error",
-  "status": "fail",
-  "content": "지원하지 않는 파일 형식입니다: application/pdf",
-  "error_code": "UNSUPPORTED_FILE_TYPE"
-}
-```
-
-**429 Too Many Requests**
-
-```json
-{
-  "type": "error",
-  "status": "fail",
-  "content": "API 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.",
-  "error_code": "RATE_LIMIT_EXCEEDED"
-}
-```
-
-**500 Internal Server Error**
-
-```json
-{
-  "type": "error",
-  "status": "fail",
-  "content": "서버 내부 오류가 발생했습니다.",
-  "error_code": "INTERNAL_ERROR"
+// 위젯에서 사용
+class ChatWidget extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<ChatProvider>(
+      builder: (context, chatProvider, child) {
+        return Column(
+          children: [
+            if (chatProvider.isLoading)
+              CircularProgressIndicator(),
+            
+            if (chatProvider.error != null)
+              Text('에러: ${chatProvider.error}', style: TextStyle(color: Colors.red)),
+            
+            Expanded(
+              child: SingleChildScrollView(
+                child: Text(chatProvider.response),
+              ),
+            ),
+            
+            ElevatedButton(
+              onPressed: chatProvider.isLoading ? null : () {
+                chatProvider.sendMessage(message: '안전보건법 제38조는?');
+              },
+              child: Text('질문하기'),
+            ),
+          ],
+        );
+      },
+    );
+  }
 }
 ```
 
@@ -227,55 +414,114 @@ POST /chat
 
 ## 요청/응답 스키마
 
-### 요청 파라미터
+### 요청 타입별 처리
 
-```typescript
-interface ChatRequest {
-  file?: File;           // 이미지 파일 (선택)
-  message?: string;      // 텍스트 메시지 (선택)
-}
+#### 유형 1: 이미지만 전송
+
+```bash
+curl -X POST http://localhost:8000/chat/stream \
+  -F "file=@photo.jpg" \
+  -H "Accept: text/event-stream"
+```
+
+**처리**: 기본 산안법 점검 프롬프트 자동 적용
+
+**응답 예시** (JSON 버퍼링):
+```json
+data: {"type":"text","content":"비계 점검 결과:\n## 1. 보호구"}
+data: {"type":"text","content":" 착용 여부"}
+data: {"type":"text","content":"\n- 안전모: 미착용 (×위반)"}
+data: {"type":"text","content":"\n\n## 2. 난간대 높이"}
+data: {"type":"text","content":"\n- 현황: 85cm\n- 기준:"}
+data: {"type":"text","content":" 90cm 이상"}
+```
+
+#### 유형 2: 이미지 + 질문
+
+```bash
+curl -X POST http://localhost:8000/chat/stream \
+  -F "file=@photo.jpg" \
+  -F "message=비계의 난간대 높이 기준은?" \
+  -H "Accept: text/event-stream"
+```
+
+**처리**: 맞춤형 이미지 분석
+
+#### 유형 3: 문서 생성
+
+```bash
+curl -X POST http://localhost:8000/chat/stream \
+  -F "message=위험성평가 체크리스트를 마크다운으로 만들어줘" \
+  -H "Accept: text/event-stream"
+```
+
+**문서 생성 키워드**: `작성`, `체크리스트`, `표`, `위험성평가`, `만들어`
+
+#### 유형 4: 일반 질의응답
+
+```bash
+curl -X POST http://localhost:8000/chat/stream \
+  -F "message=산업안전보건법 제15조의 내용은?" \
+  -H "Accept: text/event-stream"
 ```
 
 ### 응답 스키마
 
-```typescript
-// 공통 응답
-interface BaseResponse {
-  status: "success" | "fail";
-}
+#### 성공 응답 (200)
 
-// 이미지 분석 응답
-interface VisionResponse extends BaseResponse {
-  type: "vision";
-  content: string;        // AI 분석 결과
-  status: "success";
-}
+```
+data: 응답텍스트청크1
+data: 응답텍스트청크2
+...
+```
 
-// 문서 생성 응답
-interface DocumentResponse extends BaseResponse {
-  type: "document";
-  content: string;        // 마크다운 형식 문서
-  status: "success";
-}
+#### 에러 응답
 
-// 질의응답 응답
-interface QAResponse extends BaseResponse {
-  type: "qa";
-  content: string;        // 답변 텍스트
-  model_used?: string;    // 사용된 AI 모델
-  source_docs?: Array<{   // 참조 문서 메타데이터 (RAG)
-    source: string;
-    chunk_index: number;
-  }>;
-  status: "success";
+**400 - 잘못된 요청**:
+```json
+{
+  "detail": {
+    "type": "error",
+    "status": "fail",
+    "content": "파일 또는 메시지 중 하나는 반드시 제공되어야 합니다.",
+    "error_code": "INVALID_INPUT"
+  }
 }
+```
 
-// 에러 응답
-interface ErrorResponse extends BaseResponse {
-  type: "error";
-  status: "fail";
-  content: string;        // 에러 메시지
-  error_code?: string;    // 에러 코드
+**413 - 파일 크기 초과**:
+```json
+{
+  "detail": {
+    "type": "error",
+    "status": "fail",
+    "content": "파일이 10MB를 초과했습니다.",
+    "error_code": "FILE_TOO_LARGE"
+  }
+}
+```
+
+**415 - 지원하지 않는 파일 타입**:
+```json
+{
+  "detail": {
+    "type": "error",
+    "status": "fail",
+    "content": "지원하지 않는 이미지 형식: image/bmp",
+    "error_code": "UNSUPPORTED_MEDIA_TYPE"
+  }
+}
+```
+
+**500 - 서버 오류**:
+```json
+{
+  "detail": {
+    "type": "error",
+    "status": "fail",
+    "content": "API 호출 오류 발생",
+    "error_code": "API_ERROR"
+  }
 }
 ```
 
@@ -283,48 +529,60 @@ interface ErrorResponse extends BaseResponse {
 
 ## 에러 처리
 
-### HTTP 상태 코드
+### 에러 코드 맵
 
-| 코드 | 의미 | 설명 |
-|------|------|------|
-| 200 | OK | 요청 성공 |
-| 400 | Bad Request | 잘못된 요청 (필수 파라미터 누락, 형식 오류) |
-| 413 | Payload Too Large | 파일 크기 초과 (10MB 초과) |
-| 415 | Unsupported Media Type | 지원하지 않는 파일 타입 |
-| 429 | Too Many Requests | API 요청 한도 초과 |
-| 500 | Internal Server Error | 서버 오류 |
-| 503 | Service Unavailable | AI 서비스 연결 불가 |
-
-### 에러 코드
-
-| 코드 | 설명 | HTTP | 재시도 |
+| 코드 | HTTP | 설명 | 재시도 |
 |------|------|------|--------|
-| `INVALID_MESSAGE` | 메시지/파일 누락 | 400 | ✗ |
-| `FILE_TOO_LARGE` | 파일 크기 초과 | 413 | ✗ |
-| `UNSUPPORTED_FILE_TYPE` | 지원하지 않는 파일 타입 | 415 | ✗ |
-| `RATE_LIMIT_EXCEEDED` | API 요청 한도 초과 | 429 | ✅ (대기 후) |
-| `API_ERROR` | AI API 오류 | 500 | ✅ (지수 백오프) |
-| `API_CONNECTION_ERROR` | AI 서비스 연결 실패 | 503 | ✅ (대기 후) |
-| `INTERNAL_ERROR` | 서버 내부 오류 | 500 | ✅ (3회 제한) |
+| `INVALID_INPUT` | 400 | 입력 값 검증 실패 | ❌ |
+| `FILE_TOO_LARGE` | 413 | 파일 크기 초과 | ❌ |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | 지원하지 않는 형식 | ❌ |
+| `API_ERROR` | 500 | Anthropic API 오류 | ✅ |
+| `RATE_LIMIT` | 429 | API 요청 한도 초과 | ✅ (재시도 권장) |
 
-### 재시도 전략
+### 권장 에러 처리 로직 (Flutter/Dart)
 
-```javascript
-// 지수 백오프 재시도 예시
-async function apiCallWithRetry(request, maxRetries = 3) {
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      return await fetch('/chat', request);
-    } catch (error) {
-      if (error.status === 429 || error.status >= 500) {
-        const delay = Math.pow(2, i) * 1000; // 1초, 2초, 4초
-        await new Promise(resolve => setTimeout(resolve, delay));
-      } else {
-        throw error; // 재시도 불가능한 에러
+```dart
+class SafetyApiService {
+  Future<void> chatWithRetry({
+    String? imagePath,
+    String? message,
+    int maxRetries = 3,
+  }) async {
+    for (int i = 0; i < maxRetries; i++) {
+      try {
+        await for (var chunk in streamChat(
+          imagePath: imagePath,
+          message: message,
+        )) {
+          // 응답 처리
+          print(chunk);
+        }
+        return; // 성공 시 종료
+      } catch (e) {
+        final errorCode = _extractErrorCode(e);
+        
+        // 재시도 불가 에러
+        if (!['API_ERROR', 'RATE_LIMIT'].contains(errorCode)) {
+          rethrow;
+        }
+        
+        // 마지막 시도였다면 에러 던지기
+        if (i == maxRetries - 1) {
+          rethrow;
+        }
+        
+        // Exponential backoff
+        await Future.delayed(Duration(seconds: (i + 1) * 2));
       }
     }
   }
-  throw new Error('Max retries exceeded');
+  
+  String? _extractErrorCode(dynamic error) {
+    final errorStr = error.toString();
+    if (errorStr.contains('API_ERROR')) return 'API_ERROR';
+    if (errorStr.contains('RATE_LIMIT')) return 'RATE_LIMIT';
+    return null;
+  }
 }
 ```
 
@@ -332,309 +590,343 @@ async function apiCallWithRetry(request, maxRetries = 3) {
 
 ## 코드 예시
 
-### JavaScript / TypeScript
+### Flutter 에러 처리 및 재시도
 
-#### 예제 1: 이미지 분석 (사진만)
-
-```javascript
-async function analyzeImage(imageFile) {
-  const formData = new FormData();
-  formData.append('file', imageFile);
+```dart
+class SafetyApiService {
+  static const int maxRetries = 3;
+  static const Duration retryDelay = Duration(seconds: 2);
   
-  const response = await fetch('http://localhost:8000/chat', {
-    method: 'POST',
-    body: formData
-  });
-  
-  if (!response.ok) {
-    const error = await response.json();
-    console.error(`Error: ${error.error_code} - ${error.content}`);
-    return null;
-  }
-  
-  const result = await response.json();
-  console.log(result.content);
-  return result;
-}
-```
-
-#### 예제 2: 이미지 분석 (사진 + 질문)
-
-```javascript
-async function analyzeImageWithQuestion(imageFile, question) {
-  const formData = new FormData();
-  formData.append('file', imageFile);
-  formData.append('message', question);
-  
-  const response = await fetch('http://localhost:8000/chat', {
-    method: 'POST',
-    body: formData
-  });
-  
-  const result = await response.json();
-  if (result.status === 'success') {
-    return result.content;
-  } else {
-    throw new Error(result.content);
-  }
-}
-```
-
-#### 예제 3: 질의응답
-
-```javascript
-async function askQuestion(question) {
-  const formData = new FormData();
-  formData.append('message', question);
-  
-  const response = await fetch('http://localhost:8000/chat', {
-    method: 'POST',
-    body: formData
-  });
-  
-  const result = await response.json();
-  return result.content;
-}
-```
-
-#### 예제 4: 문서 생성
-
-```javascript
-async function generateDocument(request) {
-  const formData = new FormData();
-  formData.append('message', request);
-  
-  const response = await fetch('http://localhost:8000/chat', {
-    method: 'POST',
-    body: formData
-  });
-  
-  const result = await response.json();
-  // Markdown을 HTML로 변환 (marked.js 등 사용)
-  return markdownToHtml(result.content);
-}
-```
-
-#### 예제 5: 재시도 로직이 있는 호출
-
-```javascript
-async function callWithRetry(formData, maxRetries = 3) {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+  Stream<String> streamChatWithRetry({
+    String? imagePath,
+    String? message,
+    int retryCount = 0,
+  }) async* {
     try {
-      const response = await fetch('http://localhost:8000/chat', {
-        method: 'POST',
-        body: formData
-      });
-      
-      if (response.ok) {
-        return await response.json();
+      await for (var chunk in streamChat(
+        imagePath: imagePath,
+        message: message,
+      )) {
+        yield chunk;
       }
-      
-      const error = await response.json();
-      
+    } catch (e) {
       // 재시도 가능한 에러인지 확인
-      if ([429, 503].includes(response.status)) {
-        const delay = Math.pow(2, attempt - 1) * 1000;
-        console.log(`재시도 ${attempt}/${maxRetries} (${delay}ms 대기)`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        continue;
+      if (retryCount < maxRetries && _isRetryableError(e)) {
+        await Future.delayed(retryDelay * (retryCount + 1));
+        
+        yield* streamChatWithRetry(
+          imagePath: imagePath,
+          message: message,
+          retryCount: retryCount + 1,
+        );
+      } else {
+        throw e;
+      }
+    }
+  }
+  
+  bool _isRetryableError(dynamic error) {
+    if (error is http.ClientException) return true;
+    if (error.toString().contains('API_ERROR')) return true;
+    if (error.toString().contains('RATE_LIMIT')) return true;
+    return false;
+  }
+}
+```
+
+### Dio 패키지 사용 (고급)
+
+```dart
+import 'package:dio/dio.dart';
+
+class SafetyApiClient {
+  final Dio _dio;
+  
+  SafetyApiClient() : _dio = Dio(BaseOptions(
+    baseUrl: 'http://localhost:8000',
+    connectTimeout: Duration(seconds: 30),
+    receiveTimeout: Duration(seconds: 30),
+  ));
+  
+  Stream<String> streamChat({
+    String? imagePath,
+    String? message,
+  }) async* {
+    try {
+      FormData formData = FormData();
+      
+      if (imagePath != null) {
+        formData.files.add(MapEntry(
+          'file',
+          await MultipartFile.fromFile(imagePath),
+        ));
       }
       
-      // 재시도 불가능한 에러
-      throw new Error(`${error.error_code}: ${error.content}`);
-    } catch (error) {
-      if (attempt === maxRetries) throw error;
+      if (message != null) {
+        formData.fields.add(MapEntry('message', message));
+      }
+      
+      // 스트리밍 요청
+      final response = await _dio.post(
+        '/chat/stream',
+        data: formData,
+        options: Options(
+          responseType: ResponseType.stream,
+          headers: {'Accept': 'text/event-stream'},
+        ),
+      );
+      
+      // 스트림 파싱
+      String buffer = '';
+      
+      await for (var chunk in response.data.stream.transform(utf8.decoder)) {
+        buffer += chunk;
+        
+        var lines = buffer.split('\n\n');
+        buffer = lines.last;
+        
+        for (var i = 0; i < lines.length - 1; i++) {
+          if (lines[i].startsWith('data: ')) {
+            var jsonStr = lines[i].substring(6);
+            var jsonData = jsonDecode(jsonStr);
+            
+            if (jsonData['type'] == 'text') {
+              yield jsonData['content'] as String;
+            }
+          }
+        }
+      }
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+  
+  Exception _handleDioError(DioException e) {
+    if (e.response?.statusCode == 400) {
+      return Exception('잘못된 요청: ${e.response?.data}');
+    } else if (e.response?.statusCode == 413) {
+      return Exception('파일 크기가 10MB를 초과했습니다');
+    } else if (e.response?.statusCode == 415) {
+      return Exception('지원하지 않는 이미지 형식입니다');
+    } else {
+      return Exception('네트워크 오류: ${e.message}');
     }
   }
 }
 ```
 
-### React 컴포넌트 예제
+### 완전한 UI 예시 (GetX 패턴)
 
-```typescript
-import React, { useState } from 'react';
+```dart
+// controller.dart
+import 'package:get/get.dart';
 
-interface ChatResult {
-  type: 'vision' | 'document' | 'qa';
-  content: string;
-  status: 'success' | 'fail';
+class ChatController extends GetxController {
+  final SafetyApiService _apiService = SafetyApiService();
+  
+  final response = ''.obs;
+  final isLoading = false.obs;
+  final error = Rxn<String>();
+  final imagePath = Rxn<String>();
+  
+  Future<void> sendMessage(String? message) async {
+    if (imagePath.value == null && (message == null || message.isEmpty)) {
+      Get.snackbar('오류', '이미지 또는 메시지를 입력하세요');
+      return;
+    }
+    
+    isLoading.value = true;
+    response.value = '';
+    error.value = null;
+    
+    try {
+      await for (var chunk in _apiService.streamChat(
+        imagePath: imagePath.value,
+        message: message,
+      )) {
+        response.value += chunk;
+      }
+    } catch (e) {
+      error.value = e.toString();
+    } finally {
+      isLoading.value = false;
+    }
+  }
+  
+  void clear() {
+    response.value = '';
+    error.value = null;
+    imagePath.value = null;
+  }
 }
 
-export const SafetyChat: React.FC = () => {
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<ChatResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSubmit = async (
-    imageFile?: File,
-    message?: string
-  ) => {
-    setLoading(true);
-    setError(null);
-
-    const formData = new FormData();
-    if (imageFile) formData.append('file', imageFile);
-    if (message) formData.append('message', message);
-
-    try {
-      const response = await fetch('/chat', {
-        method: 'POST',
-        body: formData
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.content);
-      }
-
-      const data: ChatResult = await response.json();
-      setResult(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '알 수 없는 오류');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div>
-      {loading && <p>처리 중...</p>}
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-      {result && <p>{result.content}</p>}
-      <button onClick={() => handleSubmit(undefined, '안전모 규정은?')}>
-        질문하기
-      </button>
-    </div>
-  );
-};
-```
-
-### Python 예제
-
-```python
-import requests
-from typing import Optional
-
-API_URL = "http://localhost:8000"
-
-def analyze_image(image_path: str, question: Optional[str] = None) -> dict:
-    """이미지 분석"""
-    with open(image_path, 'rb') as f:
-        files = {'file': f}
-        data = {'message': question} if question else {}
-        
-        response = requests.post(
-            f"{API_URL}/chat",
-            files=files,
-            data=data
-        )
+// screen.dart
+class ChatScreen extends GetView<ChatController> {
+  final TextEditingController _textController = TextEditingController();
+  
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('안전 점검 AI')),
+      body: Column(
+        children: [
+          // 이미지 선택
+          Obx(() => controller.imagePath.value != null
+            ? Image.file(File(controller.imagePath.value!))
+            : ElevatedButton(
+                onPressed: _pickImage,
+                child: Text('이미지 선택'),
+              ),
+          ),
+          
+          // 메시지 입력
+          Padding(
+            padding: EdgeInsets.all(16),
+            child: TextField(
+              controller: _textController,
+              decoration: InputDecoration(
+                hintText: '질문을 입력하세요...',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ),
+          
+          // 전송 버튼
+          Obx(() => ElevatedButton(
+            onPressed: controller.isLoading.value
+              ? null
+              : () => controller.sendMessage(_textController.text),
+            child: Text(controller.isLoading.value ? '분석 중...' : '전송'),
+          )),
+          
+          // 응답 표시
+          Expanded(
+            child: Obx(() {
+              if (controller.error.value != null) {
+                return Center(
+                  child: Text(
+                    '에러: ${controller.error.value}',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                );
+              }
+              
+              return SingleChildScrollView(
+                padding: EdgeInsets.all(16),
+                child: SelectableText(
+                  controller.response.value,
+                  style: TextStyle(fontSize: 16),
+                ),
+              );
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Future<void> _pickImage() async {
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
     
-    response.raise_for_status()
-    return response.json()
+    if (image != null) {
+      controller.imagePath.value = image.path;
+    }
+  }
+}
+```
 
-def ask_question(question: str) -> dict:
-    """질문하기"""
-    data = {'message': question}
-    response = requests.post(f"{API_URL}/chat", data=data)
-    response.raise_for_status()
-    return response.json()
+### 테스트 코드 (Unit Test)
 
-# 사용 예시
-result = analyze_image('site.jpg', '이 현장의 위험요소는?')
-print(result['content'])
+```dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mockito/mockito.dart';
+
+void main() {
+  group('SafetyApiService', () {
+    test('streamChat should yield text chunks', () async {
+      final apiService = SafetyApiService();
+      
+      final stream = apiService.streamChat(
+        message: '테스트 질문',
+      );
+      
+      final chunks = await stream.toList();
+      
+      expect(chunks, isNotEmpty);
+      expect(chunks.first, isA<String>());
+    });
+    
+    test('should handle errors gracefully', () async {
+      final apiService = SafetyApiService();
+      
+      expect(
+        () => apiService.streamChat(imagePath: null, message: null),
+        throwsA(isA<Exception>()),
+      );
+    });
+  });
+}
 ```
 
 ---
 
-## FAQ
+## 성능 및 제한사항
 
-### Q1. 파일 크기 제한은?
-**A.** 최대 10MB입니다. 더 큰 파일은 먼저 압축하거나 해상도를 낮춰서 업로드하세요.
+### 요청 제한
 
-### Q2. 어떤 이미지 형식을 지원하나요?
-**A.** JPEG, PNG, GIF, WebP를 지원합니다. BMP, TIFF 등은 지원하지 않습니다.
+| 항목 | 값 |
+|------|-----|
+| 최대 파일 크기 | 10MB |
+| 최대 메시지 길이 | 2000자 |
+| 타임아웃 | 30초 |
+| Rate Limit | 100 req/min (예정) |
 
-### Q3. 요청에 응답이 없으면 어떻게 하나요?
-**A.** 최대 30초 대기 후 에러를 반환합니다. 타임아웃 에러는 재시도 가능합니다.
+### 응답 크기
 
-### Q4. 요청 개수 제한이 있나요?
-**A.** 현재는 제한이 없지만, 향후 Rate Limiting이 추가될 예정입니다.
+| 유형 | 최대 토큰 | 평균 크기 |
+|------|----------|----------|
+| 이미지 분석 | 800 | 2KB-5KB |
+| 문서 생성 | 1500 | 5KB-15KB |
+| 질의응답 | 800 | 1KB-3KB |
 
-### Q5. 한국어 이외 언어도 지원하나요?
-**A.** 현재는 한국어만 최적화되어 있습니다. 다국어 지원은 Q3 2026 예정입니다.
+### 응답 시간
 
-### Q6. 이미지 분석이 느린데 어떻게 하나요?
-**A.** 다음을 시도해보세요:
-- 이미지 크기 줄이기 (최대한 작게)
-- 불필요한 세부사항 제거
-- 잠시 후 재시도
-
-### Q7. API 응답이 정확하지 않으면?
-**A.** 질문을 더 구체적으로 작성하거나, 이미지를 더 선명하게 촬영하세요.
-
-### Q8. CORS 에러가 발생하면?
-**A.** 현재 개발 환경에서는 모든 도메인을 허용합니다. 프로덕션에서는 올바른 도메인으로 요청하세요.
-
-### Q9. 사용자 데이터는 보관되나요?
-**A.** 아니요. 요청 처리 직후 모든 데이터는 삭제됩니다.
-
-### Q10. API 키 없이 호출할 수 있나요?
-**A.** 네. 현재 개발 단계에서는 인증이 필요 없습니다. 향후 OAuth2 인증이 추가됩니다.
+| 유형 | 첫 청크 | 전체 완료 |
+|------|--------|----------|
+| 이미지 분석 | ~200ms | 1-2초 |
+| 문서 생성 | ~300ms | 3-5초 |
+| 질의응답 | ~150ms | 1-2초 |
 
 ---
 
-## 문제 해결
+## 자주 묻는 질문
 
-### 연결 실패
+### Q1: 스트리밍이 끝나지 않으면?
 
-```
-Error: Failed to fetch
+A: 다음을 확인하세요:
+1. 네트워크 연결 상태
+2. 브라우저 콘솔의 에러 메시지
+3. 30초 타임아웃 설정 확인
 
-✅ 해결:
-1. 서버가 실행 중인지 확인: curl http://localhost:8000/
-2. 올바른 URL을 사용하는지 확인
-3. 방화벽 설정 확인
-```
+### Q2: 이미지가 인식되지 않으면?
 
-### 파일 업로드 실패
+A: 다음을 시도하세요:
+1. 이미지 형식 확인 (JPEG, PNG, GIF, WebP만 지원)
+2. 파일 크기 확인 (10MB 이하)
+3. 이미지 품질 확인 (너무 어둡거나 블러된 이미지는 인식 어려움)
 
-```
-413 Payload Too Large
+### Q3: API 키를 어디서 얻나요?
 
-✅ 해결:
-1. 파일 크기 확인: 최대 10MB
-2. 파일 크기 줄이기 (이미지 압축 등)
-```
+A: [Anthropic Console](https://console.anthropic.com)에서 생성할 수 있습니다.
 
-### 응답이 없음
+### Q4: 로컬 테스트는 어떻게 하나요?
 
-```
-504 Gateway Timeout
-
-✅ 해결:
-1. 잠시 후 재시도
-2. 더 작은 이미지로 시도
-3. 쿼리를 더 간단하게 작성
-```
+A: README.md의 "빠른 시작" 섹션을 참고하세요.
 
 ---
 
-## 지원
-
-### 버그 리포트
-- GitHub Issues: https://github.com/example/issues
-- 이메일: backend@example.com
-
-### 기능 요청
-- Discussions: https://github.com/example/discussions
-
-### 기술 지원
-- Slack: #ai-support
-- Email: support@example.com
-
----
-
-**마지막 업데이트:** 2026년 1월 10일  
-**버전:** 2.0.0  
-**상태:** ✅ 프로덕션 준비 완료
+**API 문서 버전**: 2.1.0  
+**마지막 업데이트**: 2026-01-10  
+**상태**: ✅ 프로덕션 준비 완료
 

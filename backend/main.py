@@ -1,24 +1,22 @@
 """
 Safety AI Agent - 산업안전 통합 AI 서비스
+스트리밍(SSE) 기반 실시간 응답
 """
 import anthropic
 import os
 import base64
-from typing import Optional, List, Union
+from typing import Optional, List, Union, AsyncGenerator
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from anthropic.types import MessageParam, TextBlock, ContentBlock
 
 # 내부 모듈
 from app.core.constants import (
     MODEL_ID,
     MAX_FILE_SIZE,
     SUPPORTED_IMAGE_TYPES,
-    MODEL_CONFIG,
-    SYSTEM_PROMPTS,
     DEFAULT_VISION_PROMPT,
-    DOCUMENT_KEYWORDS
 )
 from app.core.validation import (
     validate_environment,
@@ -35,6 +33,8 @@ from app.models.schemas import (
     QAResponse,
     ErrorResponse
 )
+from app.services.chat_service import ChatService
+from app.services.request_handler import RequestHandler, RequestType
 
 # 환경변수 로드
 load_dotenv()
@@ -57,8 +57,8 @@ except RuntimeError as e:
 # FastAPI 앱 초기화
 app = FastAPI(
     title="Safety AI Agent",
-    description="산업안전보건 통합 AI 분석 서비스 - 이미지 분석, 문서 생성, 질의응답",
-    version="2.0.0",
+    description="산업안전보건 통합 AI 분석 서비스 - 스트리밍 기반 실시간 응답",
+    version="2.1.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -72,20 +72,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Anthropic 클라이언트 초기화
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+# 서비스 초기화
+api_key = os.getenv("ANTHROPIC_API_KEY")
+chat_service = ChatService(api_key)
 
-logger.info(f"✅ Safety AI Agent 시작 완료 (모델: {MODEL_ID})")
+logger.info(f"✅ Safety AI Agent 시작 완료 (모델: {MODEL_ID}, 스트리밍 활성화)")
 
 
 # ============================================================================
 # 헬퍼 함수
 # ============================================================================
-
-def extract_full_text(content_blocks: List[ContentBlock]) -> str:
-    """Anthropic 응답 블록에서 텍스트만 추출"""
-    return "".join([block.text for block in content_blocks if isinstance(block, TextBlock)])
-
 
 def get_media_type(file: UploadFile) -> str:
     """파일의 media_type을 검증하고 반환"""
@@ -106,6 +102,22 @@ def get_media_type(file: UploadFile) -> str:
     return validate_image_type(content_type, SUPPORTED_IMAGE_TYPES)
 
 
+async def stream_response(
+    generator: AsyncGenerator[str, None],
+) -> AsyncGenerator[str, None]:
+    """
+    버퍼링된 JSON을 SSE 포맷으로 변환
+
+    Args:
+        generator: JSON 문자열 제너레이터
+
+    Yields:
+        SSE 포맷의 데이터 (data: {JSON}\n\n)
+    """
+    async for json_chunk in generator:
+        # SSE 포맷: data: {JSON}\n\n
+        yield f"data: {json_chunk}\n\n"
+
 
 # ============================================================================
 # API 엔드포인트
@@ -117,50 +129,42 @@ async def root():
     return {
         "status": "healthy",
         "service": "Safety AI Agent",
-        "version": "2.0.0"
+        "version": "2.1.0",
+        "streaming": True
     }
 
 
 @app.post(
-    "/chat",
-    response_model=Union[VisionResponse, DocumentResponse, QAResponse],
-    responses={
-        400: {"model": ErrorResponse, "description": "잘못된 요청"},
-        413: {"model": ErrorResponse, "description": "파일 크기 초과"},
-        415: {"model": ErrorResponse, "description": "지원하지 않는 파일 타입"},
-        429: {"model": ErrorResponse, "description": "API 요청 한도 초과"},
-        500: {"model": ErrorResponse, "description": "서버 오류"},
-    },
-    summary="안전 점검 통합 API",
+    "/chat/stream",
+    summary="안전 점검 통합 API (스트리밍)",
     description=(
-        "이미지 분석, 문서 생성, 질의응답을 수행하는 통합 엔드포인트입니다.\n\n"
+        "실시간 스트리밍(SSE) 기반 응답 제공\n\n"
         "**사용 예시:**\n"
         "1. 이미지만 전송 → 산안법 기준으로 자동 분석\n"
         "2. 이미지 + 질문 → 맞춤형 분석\n"
         "3. 텍스트(문서 생성 키워드 포함) → 문서 생성\n"
         "4. 일반 텍스트 질문 → 질의응답"
     ),
-    tags=["chat"]
+    tags=["chat"],
+    responses={
+        400: {"model": ErrorResponse, "description": "잘못된 요청"},
+        413: {"model": ErrorResponse, "description": "파일 크기 초과"},
+        415: {"model": ErrorResponse, "description": "지원하지 않는 파일 타입"},
+        500: {"model": ErrorResponse, "description": "서버 오류"},
+    }
 )
-async def integrated_chat(
+async def chat_stream(
     file: Optional[UploadFile] = File(None, description="분석할 이미지 파일 (최대 10MB)"),
     message: Optional[str] = Form(None, description="질문 또는 요청 메시지"),
-) -> Union[VisionResponse, DocumentResponse, QAResponse]:
+):
     """
-    안전 점검 통합 처리
-
-    Args:
-        file: 업로드된 이미지 파일 (선택)
-        message: 사용자 메시지 (선택)
+    스트리밍 기반 안전 점검 통합 처리
 
     Returns:
-        Union[VisionResponse, DocumentResponse, QAResponse]: 처리 결과
-
-    Raises:
-        HTTPException: 입력 검증 실패 또는 처리 오류
+        StreamingResponse: SSE 형식의 실시간 응답 스트림
     """
     request_id = f"req_{os.urandom(4).hex()}"
-    logger.info(f"[{request_id}] 요청 시작 - file: {bool(file)}, message: {bool(message)}")
+    logger.info(f"[{request_id}] 스트리밍 요청 시작 - file: {bool(file)}, message: {bool(message)}")
 
     try:
         # 1. 입력 검증
@@ -168,111 +172,75 @@ async def integrated_chat(
             logger.warning(f"[{request_id}] 입력 누락")
             raise InvalidMessageError("파일 또는 메시지 중 하나는 반드시 제공되어야 합니다.")
 
-        # 2. 이미지 분석 처리
-        if file:
-            logger.info(f"[{request_id}] 이미지 분석 시작 - {file.filename}")
+        # 2. 요청 타입 결정
+        request_type = RequestHandler.determine_request_type(bool(file), message)
+        logger.info(f"[{request_id}] 요청 타입: {request_type}")
 
-            # 파일 크기 검증
+        # 3. 이미지 분석
+        if request_type == RequestType.VISION:
             file_content = await file.read()
             validate_file_size(len(file_content), MAX_FILE_SIZE)
 
-            # 이미지 타입 검증
             media_type = get_media_type(file)
-
-            # Base64 인코딩
             base64_image = base64.b64encode(file_content).decode("utf-8")
 
-            # 프롬프트 결정
-            user_text = (message or "").strip() or DEFAULT_VISION_PROMPT
+            # 프롬프트 결정 (메시지 없으면 기본값 사용)
+            user_prompt = (message or "").strip() or DEFAULT_VISION_PROMPT
 
-            # API 호출
-            vision_messages: List[MessageParam] = [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": base64_image,
-                            },
-                        },
-                        {"type": "text", "text": user_text},
-                    ],
+            logger.info(f"[{request_id}] 이미지 분석 스트리밍 시작")
+
+            generator = chat_service.stream_vision_analysis(
+                base64_image=base64_image,
+                media_type=media_type,
+                user_prompt=user_prompt,
+            )
+
+            return StreamingResponse(
+                stream_response(generator),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
                 }
-            ]
-
-            response = client.messages.create(
-                model=MODEL_ID,
-                max_tokens=MODEL_CONFIG["vision"]["max_tokens"],
-                temperature=MODEL_CONFIG["vision"]["temperature"],
-                system=SYSTEM_PROMPTS["vision"],
-                messages=vision_messages,
             )
 
-            result_content = extract_full_text(response.content)
-            logger.info(f"[{request_id}] 이미지 분석 완료 - {len(result_content)} chars")
+        # 4. 문서 생성
+        if request_type == RequestType.DOCUMENT:
+            logger.info(f"[{request_id}] 문서 생성 스트리밍 시작")
 
-            return VisionResponse(
-                type="vision",
-                content=result_content,
-                status="success"
+            generator = chat_service.stream_document_generation(
+                user_message=message
             )
 
-        # 3. 문서 생성 처리
-        if message and any(keyword in message for keyword in DOCUMENT_KEYWORDS):
-            logger.info(f"[{request_id}] 문서 생성 시작")
-
-            doc_messages: List[MessageParam] = [{"role": "user", "content": message}]
-
-            response = client.messages.create(
-                model=MODEL_ID,
-                max_tokens=MODEL_CONFIG["document"]["max_tokens"],
-                temperature=MODEL_CONFIG["document"]["temperature"],
-                system=SYSTEM_PROMPTS["document"],
-                messages=doc_messages,
+            return StreamingResponse(
+                stream_response(generator),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                }
             )
 
-            result_content = extract_full_text(response.content)
-            logger.info(f"[{request_id}] 문서 생성 완료 - {len(result_content)} chars")
+        # 5. 질의응답
+        if request_type == RequestType.QA:
+            logger.info(f"[{request_id}] 질의응답 스트리밍 시작")
 
-            return DocumentResponse(
-                type="document",
-                content=result_content,
-                status="success"
+            generator = chat_service.stream_qa(user_message=message)
+
+            return StreamingResponse(
+                stream_response(generator),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                }
             )
 
-        # 4. 일반 질의응답 처리
-        logger.info(f"[{request_id}] 질의응답 시작")
-
-        qa_message_content = message or "산업안전보건 관련 질의"
-        qa_messages: List[MessageParam] = [{"role": "user", "content": qa_message_content}]
-
-        response = client.messages.create(
-            model=MODEL_ID,
-            max_tokens=MODEL_CONFIG["qa"]["max_tokens"],
-            temperature=MODEL_CONFIG["qa"]["temperature"],
-            system=SYSTEM_PROMPTS["qa"],
-            messages=qa_messages,
-        )
-
-        result_content = extract_full_text(response.content)
-        logger.info(f"[{request_id}] 질의응답 완료 - {len(result_content)} chars")
-
-        return QAResponse(
-            type="qa",
-            content=result_content,
-            model_used=MODEL_ID,
-            status="success"
-        )
-
-    except HTTPException:
-        # FastAPI HTTPException은 그대로 전파
+    except HTTPException as he:
+        logger.error(f"[{request_id}] HTTP 예외: {he.detail}")
         raise
 
     except Exception as e:
-        # 모든 예외를 적절한 HTTP 응답으로 변환
         status_code, error_message, error_code = handle_anthropic_error(e)
         logger.error(f"[{request_id}] 에러 발생: {error_message}", exc_info=True)
 
@@ -285,3 +253,4 @@ async def integrated_chat(
                 "error_code": error_code
             }
         )
+
