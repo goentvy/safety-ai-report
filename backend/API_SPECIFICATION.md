@@ -117,16 +117,34 @@ POST /chat/stream
 
 ## 스트리밍 응답
 
-### 응답 형식 (JSON 버퍼링)
+### 안정성 강화 기능
 
-**개선된 스트리밍**: 50~60자 단위로 버퍼링된 JSON 응답
+| 기능 | 설명 | 효과 |
+|------|------|------|
+| **권장 2: 타임아웃 증가** | `timeout_keep_alive=120초` | 장시간 응답 안정성 |
+| **권장 3: X-Accel-Buffering** | Nginx 버퍼링 비활성화 | 즉시 전송 보장 |
+| **권장 4: 하트비트** | 1초마다 `{"type":"heartbeat"}` | 연결 유지 |
+| **권장 5: 동적 버퍼** | 200자 → 최대 500자 | 응답 크기별 최적화 |
+
+### 응답 형식 (개선된 SSE)
 
 ```json
-data: {"type":"text","content":"비계 점검 결과:\n## 1. 보호구"}
-data: {"type":"text","content":" 착용 여부\n- 안전모: 미착용 (위반)"}
-data: {"type":"text","content":"\n\n## 2. 난간대 높이\n- 현황: 85cm"}
-data: {"type":"text","content":"\n- 기준: 90cm 이상\n- 판정: 부적합"}
+data: {"type":"text","content":"비계 점검 결과:\n## 1. 보호구 착용 여부..."}
+data: {"type":"heartbeat","content":""}
+data: {"type":"text","content":"- 안전모: 미착용\n- 조치: 즉시 착용 필수..."}
+data: {"type":"heartbeat","content":""}
+data: {"type":"text","content":"## 2. 난간대 높이\n- 현황: 85cm..."}
+data: {"type":"done","content":"","total_chunks":3,"total_chars":487,"adaptive_buffer_used":200}
 ```
+
+### 응답 타입
+
+| type | 설명 | 필드 |
+|------|------|------|
+| `text` | 응답 텍스트 청크 | `content` (텍스트) |
+| `heartbeat` | 연결 유지 신호 | - |
+| `done` | 스트림 종료 | `total_chunks`, `total_chars`, `adaptive_buffer_used` |
+| `error` | 에러 발생 | `content` (에러 메시지) |
 
 ### Flutter/Dart 구현 (http 패키지)
 
@@ -140,7 +158,7 @@ dependencies:
   image_picker: ^1.0.0  # 이미지 선택용
 ```
 
-#### 2. SSE 스트리밍 처리
+#### 2. SSE 스트리밍 처리 (종료 신호 포함)
 
 ```dart
 import 'dart:convert';
@@ -149,12 +167,11 @@ import 'package:http/http.dart' as http;
 class SafetyApiService {
   static const String baseUrl = 'http://localhost:8000';
   
-  /// SSE 스트리밍 요청
+  /// SSE 스트리밍 요청 (종료 신호 처리 포함)
   Stream<String> streamChat({
     String? imagePath,
     String? message,
   }) async* {
-    // FormData 생성
     var request = http.MultipartRequest(
       'POST',
       Uri.parse('$baseUrl/chat/stream'),
@@ -170,32 +187,39 @@ class SafetyApiService {
       request.fields['message'] = message;
     }
     
-    // 스트리밍 응답 받기
     var streamedResponse = await request.send();
     
     if (streamedResponse.statusCode != 200) {
       throw Exception('API 오류: ${streamedResponse.statusCode}');
     }
     
-    // SSE 파싱
     String buffer = '';
     
     await for (var chunk in streamedResponse.stream.transform(utf8.decoder)) {
       buffer += chunk;
       
-      // SSE 라인 분리 (data: ... \n\n)
       var lines = buffer.split('\n\n');
       buffer = lines.last;
       
       for (var i = 0; i < lines.length - 1; i++) {
         if (lines[i].startsWith('data: ')) {
           try {
-            // JSON 파싱
             var jsonStr = lines[i].substring(6);
             var jsonData = jsonDecode(jsonStr);
             
+            // 타입별 처리
             if (jsonData['type'] == 'text') {
               yield jsonData['content'] as String;
+            } else if (jsonData['type'] == 'heartbeat') {
+              // ✅ 하트비트: 연결 유지, 아무것도 하지 않음
+              print('💓 하트비트 수신');
+            } else if (jsonData['type'] == 'done') {
+              // 스트림 종료 신호
+              final totalChunks = jsonData['total_chunks'];
+              final totalChars = jsonData['total_chars'];
+              final adaptiveBuffer = jsonData['adaptive_buffer_used'];
+              print('✅ 스트림 완료: $totalChunks개 청크, $totalChars자 수신, 버퍼크기: $adaptiveBuffer자');
+              break;
             } else if (jsonData['type'] == 'error') {
               throw Exception(jsonData['content']);
             }

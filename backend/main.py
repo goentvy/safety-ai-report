@@ -2,10 +2,9 @@
 Safety AI Agent - 산업안전 통합 AI 서비스
 스트리밍(SSE) 기반 실시간 응답
 """
-import anthropic
 import os
 import base64
-from typing import Optional, List, Union, AsyncGenerator
+from typing import Optional, AsyncGenerator
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,12 +26,7 @@ from app.core.validation import (
     InvalidMessageError
 )
 from app.core.logging_config import setup_logging, get_logger
-from app.models.schemas import (
-    VisionResponse,
-    DocumentResponse,
-    QAResponse,
-    ErrorResponse
-)
+from app.models.schemas import ErrorResponse
 from app.services.chat_service import ChatService
 from app.services.request_handler import RequestHandler, RequestType
 
@@ -74,6 +68,9 @@ app.add_middleware(
 
 # 서비스 초기화
 api_key = os.getenv("ANTHROPIC_API_KEY")
+if not api_key:
+    raise RuntimeError("ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다")
+
 chat_service = ChatService(api_key)
 
 logger.info(f"✅ Safety AI Agent 시작 완료 (모델: {MODEL_ID}, 스트리밍 활성화)")
@@ -117,6 +114,21 @@ async def stream_response(
     async for json_chunk in generator:
         # SSE 포맷: data: {JSON}\n\n
         yield f"data: {json_chunk}\n\n"
+
+
+# ✅ 권장 3: X-Accel-Buffering 헤더 설정 (프록시 버퍼링 비활성화)
+def create_streaming_response(generator: AsyncGenerator[str, None]) -> StreamingResponse:
+    """스트리밍 응답 생성 (헤더 최적화)"""
+    return StreamingResponse(
+        stream_response(generator),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "X-Accel-Buffering": "no",  # ✅ Nginx 버퍼링 비활성화
+            "Connection": "keep-alive",
+            "Transfer-Encoding": "chunked",
+        }
+    )
 
 
 # ============================================================================
@@ -178,6 +190,9 @@ async def chat_stream(
 
         # 3. 이미지 분석
         if request_type == RequestType.VISION:
+            if not file:
+                raise InvalidMessageError("이미지 파일이 필요합니다")
+
             file_content = await file.read()
             validate_file_size(len(file_content), MAX_FILE_SIZE)
 
@@ -195,46 +210,31 @@ async def chat_stream(
                 user_prompt=user_prompt,
             )
 
-            return StreamingResponse(
-                stream_response(generator),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "X-Accel-Buffering": "no",
-                }
-            )
+            return create_streaming_response(generator)
 
         # 4. 문서 생성
         if request_type == RequestType.DOCUMENT:
+            if not message:
+                raise InvalidMessageError("문서 생성을 위한 메시지가 필요합니다")
+
             logger.info(f"[{request_id}] 문서 생성 스트리밍 시작")
 
             generator = chat_service.stream_document_generation(
                 user_message=message
             )
 
-            return StreamingResponse(
-                stream_response(generator),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "X-Accel-Buffering": "no",
-                }
-            )
+            return create_streaming_response(generator)
 
         # 5. 질의응답
         if request_type == RequestType.QA:
+            if not message:
+                raise InvalidMessageError("질의응답을 위한 메시지가 필요합니다")
+
             logger.info(f"[{request_id}] 질의응답 스트리밍 시작")
 
             generator = chat_service.stream_qa(user_message=message)
 
-            return StreamingResponse(
-                stream_response(generator),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "X-Accel-Buffering": "no",
-                }
-            )
+            return create_streaming_response(generator)
 
     except HTTPException as he:
         logger.error(f"[{request_id}] HTTP 예외: {he.detail}")
