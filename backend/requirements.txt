@@ -1,5 +1,16 @@
-fastapi
-uvicorn
-anthropic
-python-dotenv
-python-multipart
+# Web Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.30.0
+
+# AI/ML
+anthropic>=0.40.0
+
+# 환경 설정
+python-dotenv>=1.0.0
+
+# 파일 업로드
+python-multipart>=0.0.9
+
+# 데이터 검증
+pydantic>=2.0.0
+
