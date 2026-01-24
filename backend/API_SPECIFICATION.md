@@ -1,7 +1,7 @@
 # 🔌 Safety AI Agent - API 명세서 (Frontend Team)
 
-**버전:** 2.0.0  
-**마지막 업데이트:** 2026년 1월 10일  
+**버전:** 2.0.0
+**마지막 업데이트:** 2026년 1월 10일
 **상태:** ✅ 프로덕션 준비 완료
 
 ---
@@ -140,9 +140,18 @@ POST /chat
 {
   "type": "vision",
   "content": "안전모 미착용이 확인되었습니다. 산업안전보건기준에 관한 규칙 제38조에 따르면...",
-  "status": "success"
+  "status": "success",
+  "source_docs": [
+    {
+      "title": "제38조 보호구의 지급 등",
+      "category": "1",
+      "similarity": 0.8523
+    }
+  ]
 }
 ```
+
+**참고:** 질문이 포함된 경우 RAG 검색이 수행되어 관련 법령이 `source_docs`에 포함됩니다.
 
 **Type 2: 문서 생성 결과 (DocumentResponse)**
 
@@ -161,10 +170,25 @@ POST /chat
   "type": "qa",
   "content": "산업안전보건법 제38조에 따르면...",
   "model_used": "claude-sonnet-4-5",
-  "source_docs": [],
+  "source_docs": [
+    {
+      "title": "제38조 보호구의 지급 등",
+      "category": "1",
+      "category_name": "산업안전보건법령",
+      "doc_id": "KOSHA01_000001000000000000000038000",
+      "filepath": "",
+      "similarity": 0.8523,
+      "content_preview": "사업주는 근로자에게 작업의 위험을 방지하기 위하여 필요한 보호구를 지급하여야 한다..."
+    }
+  ],
   "status": "success"
 }
 ```
+
+**RAG 기능:**
+- 법령 우선 검색: 카테고리 1(산업안전보건법령) 우선 검색
+- 결과 부족 시 전체 문서 검색으로 폴백
+- 검색된 법령을 시스템 프롬프트에 자동 추가
 
 #### 에러 응답
 
@@ -225,6 +249,84 @@ POST /chat
 
 ---
 
+### 3. 관리자 API (Admin API)
+
+#### 3.1. DB 상태 확인
+
+**요청:**
+```http
+GET /admin/health
+```
+
+**응답:**
+```json
+{
+  "status": "healthy",
+  "message": "DB 정상 작동",
+  "details": {
+    "db_exists": true,
+    "total_documents": 12805,
+    "category_1_count": 48,
+    "db_path": "safety_db"
+  }
+}
+```
+
+#### 3.2. 통계 정보
+
+**요청:**
+```http
+GET /admin/stats
+```
+
+**응답:**
+```json
+{
+  "db_exists": true,
+  "total_documents": 12805,
+  "category_1_count": 48,
+  "db_path": "safety_db"
+}
+```
+
+#### 3.3. DB 재구축
+
+**요청:**
+```http
+POST /admin/rebuild
+```
+
+**응답:**
+```json
+{
+  "status": "started",
+  "message": "DB 재구축이 백그라운드에서 시작되었습니다",
+  "note": "완료까지 10-15분 소요될 수 있습니다"
+}
+```
+
+**참고:** 백그라운드에서 실행되며 즉시 응답을 반환합니다.
+
+#### 3.4. DB 초기화
+
+**요청:**
+```http
+POST /admin/reset?confirm=true
+```
+
+**응답:**
+```json
+{
+  "status": "success",
+  "message": "DB가 성공적으로 삭제되었습니다",
+  "path": "safety_db"
+}
+```
+
+**⚠️ 주의:** `confirm=true` 파라미터가 없으면 400 에러를 반환합니다.
+
+---
+
 ## 요청/응답 스키마
 
 ### 요청 파라미터
@@ -249,6 +351,11 @@ interface VisionResponse extends BaseResponse {
   type: "vision";
   content: string;        // AI 분석 결과
   status: "success";
+  source_docs?: Array<{   // 참조 법령 (질문 포함 시)
+    title: string;
+    category: string;
+    similarity: number;
+  }>;
 }
 
 // 문서 생성 응답
@@ -263,9 +370,14 @@ interface QAResponse extends BaseResponse {
   type: "qa";
   content: string;        // 답변 텍스트
   model_used?: string;    // 사용된 AI 모델
-  source_docs?: Array<{   // 참조 문서 메타데이터 (RAG)
-    source: string;
-    chunk_index: number;
+  source_docs?: Array<{   // 참조 법령 메타데이터 (RAG)
+    title: string;
+    category: string;
+    category_name?: string;
+    doc_id: string;
+    filepath?: string;
+    similarity: number;    // 유사도 (0~1)
+    content_preview: string;
   }>;
   status: "success";
 }
@@ -340,18 +452,18 @@ async function apiCallWithRetry(request, maxRetries = 3) {
 async function analyzeImage(imageFile) {
   const formData = new FormData();
   formData.append('file', imageFile);
-  
+
   const response = await fetch('http://localhost:8000/chat', {
     method: 'POST',
     body: formData
   });
-  
+
   if (!response.ok) {
     const error = await response.json();
     console.error(`Error: ${error.error_code} - ${error.content}`);
     return null;
   }
-  
+
   const result = await response.json();
   console.log(result.content);
   return result;
@@ -365,12 +477,12 @@ async function analyzeImageWithQuestion(imageFile, question) {
   const formData = new FormData();
   formData.append('file', imageFile);
   formData.append('message', question);
-  
+
   const response = await fetch('http://localhost:8000/chat', {
     method: 'POST',
     body: formData
   });
-  
+
   const result = await response.json();
   if (result.status === 'success') {
     return result.content;
@@ -386,12 +498,12 @@ async function analyzeImageWithQuestion(imageFile, question) {
 async function askQuestion(question) {
   const formData = new FormData();
   formData.append('message', question);
-  
+
   const response = await fetch('http://localhost:8000/chat', {
     method: 'POST',
     body: formData
   });
-  
+
   const result = await response.json();
   return result.content;
 }
@@ -403,12 +515,12 @@ async function askQuestion(question) {
 async function generateDocument(request) {
   const formData = new FormData();
   formData.append('message', request);
-  
+
   const response = await fetch('http://localhost:8000/chat', {
     method: 'POST',
     body: formData
   });
-  
+
   const result = await response.json();
   // Markdown을 HTML로 변환 (marked.js 등 사용)
   return markdownToHtml(result.content);
@@ -425,13 +537,13 @@ async function callWithRetry(formData, maxRetries = 3) {
         method: 'POST',
         body: formData
       });
-      
+
       if (response.ok) {
         return await response.json();
       }
-      
+
       const error = await response.json();
-      
+
       // 재시도 가능한 에러인지 확인
       if ([429, 503].includes(response.status)) {
         const delay = Math.pow(2, attempt - 1) * 1000;
@@ -439,7 +551,7 @@ async function callWithRetry(formData, maxRetries = 3) {
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
-      
+
       // 재시도 불가능한 에러
       throw new Error(`${error.error_code}: ${error.content}`);
     } catch (error) {
@@ -522,13 +634,13 @@ def analyze_image(image_path: str, question: Optional[str] = None) -> dict:
     with open(image_path, 'rb') as f:
         files = {'file': f}
         data = {'message': question} if question else {}
-        
+
         response = requests.post(
             f"{API_URL}/chat",
             files=files,
             data=data
         )
-    
+
     response.raise_for_status()
     return response.json()
 
@@ -580,6 +692,17 @@ print(result['content'])
 
 ### Q10. API 키 없이 호출할 수 있나요?
 **A.** 네. 현재 개발 단계에서는 인증이 필요 없습니다. 향후 OAuth2 인증이 추가됩니다.
+
+### Q11. RAG 검색이 무엇인가요?
+**A.** Retrieval-Augmented Generation의 약자로, 질문과 관련된 법령을 검색하여 AI 답변의 정확도를 높이는 기능입니다. 법령 우선 검색을 통해 산업안전보건법령을 우선적으로 검색합니다.
+
+### Q12. source_docs는 언제 포함되나요?
+**A.** 질의응답과 이미지 분석(질문 포함) 시 관련 법령이 검색되면 `source_docs`에 포함됩니다. 유사도 점수와 함께 제공됩니다.
+
+### Q13. 벡터 DB를 재구축하려면?
+**A.** 관리자 API를 사용하거나 스크립트를 실행하세요:
+- API: `POST /admin/rebuild`
+- 스크립트: `python scripts/rebuild_all.py --skip-collect`
 
 ---
 
@@ -634,7 +757,7 @@ Error: Failed to fetch
 
 ---
 
-**마지막 업데이트:** 2026년 1월 10일  
-**버전:** 2.0.0  
-**상태:** ✅ 프로덕션 준비 완료
+**마지막 업데이트:** 2026년 1월 24일
+**버전:** 2.0.0
+**상태:** ✅ 프로덕션 준비 완료 (RAG 시스템 구축 완료)
 

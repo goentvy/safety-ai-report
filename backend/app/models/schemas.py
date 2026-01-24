@@ -25,13 +25,24 @@ class VisionResponse(BaseResponse):
     """이미지 분석 응답"""
     type: Literal["vision"] = Field(default="vision", description="응답 타입")
     content: str = Field(..., description="분석 결과 텍스트")
+    source_docs: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="참조된 법령 메타데이터 (RAG 사용 시)"
+    )
 
     class Config:
         json_schema_extra = {
             "example": {
                 "type": "vision",
                 "content": "안전모 미착용이 확인되었습니다. 산업안전보건기준에 관한 규칙 제38조...",
-                "status": "success"
+                "status": "success",
+                "source_docs": [
+                    {
+                        "title": "제38조 보호구의 지급 등",
+                        "category": "1",
+                        "similarity": 0.8523
+                    }
+                ]
             }
         }
 
