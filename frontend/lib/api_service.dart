@@ -14,7 +14,7 @@ class ApiService {
     required String message,
     Duration? customTimeout, // ✅ 요청마다 타임아웃 유연화
   }) async {
-    var uri = Uri.parse("$baseUrl/chat");
+    var uri = Uri.parse("$baseUrl/chat/stream");
     var request = http.MultipartRequest("POST", uri);
 
     // 메시지 필드 추가

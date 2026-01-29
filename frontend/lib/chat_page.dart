@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'api_service.dart';
 
 class ChatPage extends StatefulWidget {
@@ -41,20 +42,17 @@ class _ChatPageState extends State<ChatPage> {
         message: _controller.text,
       );
 
-      print("서버 응답 전체: $result");
+      debugPrint("서버 응답 전체: $result", wrapWidth: 1024);
 
       setState(() {
         if (result["status"] == "success") {
           _response = result["content"] ?? "응답 없음";
         } else {
-          // ✅ 사용자 친화적 에러 메시지
-          _response = "⚠️ 분석 중 오류가 발생했습니다.\n"
-              "잠시 후 다시 시도해주세요.";
+          _response = "⚠️ 분석 중 오류가 발생했습니다.\n잠시 후 다시 시도해주세요.";
         }
       });
     } catch (e) {
       setState(() {
-        // ✅ 사용자 친화적 에러 메시지
         _response = "⚠️ 서버와 통신 중 문제가 발생했습니다.\n"
             "네트워크 상태를 확인하거나 잠시 후 다시 시도해주세요.\n\n"
             "세부 정보: $e"; // 개발자 디버깅용
@@ -115,10 +113,14 @@ class _ChatPageState extends State<ChatPage> {
                 ),
               )
                   : SingleChildScrollView(
-                child: SelectableText(
-                  _response,
-                  style: const TextStyle(fontSize: 16),
-                  textAlign: TextAlign.start,
+                child: MarkdownBody(
+                  data: _response, // ✅ Markdown 렌더링
+                  styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+                    p: const TextStyle(fontSize: 16),
+                    h1: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                    h2: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    h3: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
                 ),
               ),
             ),
